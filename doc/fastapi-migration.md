@@ -178,9 +178,38 @@ resolved the real `skyportal_test` user (`id=1 provisioned-admin`) through the
 shim. SkyPortal additionally accepts `Authorization`-header tokens; that
 override lives in *its* `BaseHandler` and layers on top of this.
 
-Next concrete step (auth **write** path / login): replace
-`TornadoStrategy`/`TornadoStorage` (`app/psa.py`) with a small Starlette
-python-social-auth strategy (request/response/redirect/session adapters) so the
-OAuth dance at `/login/*` and `/complete/*` runs under uvicorn. With that +
-`current_user`, baselayer's own routes (`/baselayer/profile|logout`,
-`socket_auth_token`, mainpage) are fully runnable on the ASGI stack.
+### Auth write path (login) — strategy ported; initiation verified
+
+`app/handlers/asgi_psa.py` ports `TornadoStrategy` to `StarletteStrategy`
+(request/redirect/session adapters on the compat `Handler`) and the three route
+handlers from `app/handlers/auth.py` (`AuthHandler`/`CompleteHandler`/
+`DisconnectHandler`). The `TornadoStorage` SQLAlchemy models are reused
+unchanged. The `Handler` gained `redirect`/`clear_cookie`/`login_user`/
+`reverse_url`/`settings` + cookie deletion to support it.
+
+**Verified**: driving `/login/google-oauth2/` produces a 302 to
+`accounts.google.com/o/oauth2/auth` with the client_id, the absolute
+`redirect_uri` (`…/complete/google-oauth2/`), and a CSRF `state` stored in a
+secure session cookie — i.e. the ported strategy drives social_core correctly.
+
+### baselayer under uvicorn — DONE + verified live
+
+`app/handlers/asgi_baselayer.py` ports the small baselayer handlers
+(`ProfileHandler`/`LogoutHandler`/`SocketAuthTokenHandler`) onto the compat
+`Handler` (+ an `authenticated` decorator), and `make_baselayer_asgi_app()`
+assembles them with the PSA login routes into a Starlette app (forcing the ASGI
+strategy over baselayer's default Tornado one; storage is reused).
+
+**Verified live under uvicorn against the running DB**:
+`/login/google-oauth2/` 302s to the (fake) OAuth provider with the right
+`redirect_uri` + CSRF state; `/baselayer/profile` 302s to login when
+unauthenticated and returns `{"username": "provisioned-admin"}` with a real
+session cookie; `/baselayer/socket_auth_token` returns a JWT. (`MainPageHandler`
+is excluded pending a `render()` template shim.)
+
+Remaining auth piece: the OAuth **callback round-trip**
+(`/complete/{backend}/` → `do_complete`: token exchange against `fake_oauth2`,
+user lookup/create via the storage, `login_user`). The handler is written; it
+needs the `fake_oauth2` service in the loop for a full login test. The other
+open items are `MainPageHandler`'s `render()` shim and pointing
+`services/app/app.py` at `uvicorn` for the production entry point.

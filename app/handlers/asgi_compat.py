@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from functools import wraps
 
 # Starlette is an optional dependency during the migration; import lazily so
 # importing baselayer on a Tornado-only install does not fail.
@@ -50,6 +51,26 @@ class _MissingArgument(Exception):
 
 
 _NO_DEFAULT = object()
+
+
+def authenticated(method):
+    """Port of ``tornado.web.authenticated``: require a logged-in user.
+
+    GET/HEAD without a user redirect to ``settings['login_url']``; other methods
+    get a 403.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self.current_user is None:
+            if self._request.method in ("GET", "HEAD"):
+                self.redirect(self.settings.get("login_url", "/"))
+                return None
+            self.set_status(403)
+            return None
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Handler:
@@ -217,6 +238,46 @@ class Handler:
     def push_all(self, action, payload=None):
         pass
 
+    # -- redirect / cookies / auth helpers (used by the PSA login flow) -- #
+    @property
+    def settings(self):
+        # The app settings dict (baselayer_settings: SOCIAL_AUTH_* etc.).
+        return getattr(self.app, "settings", None) or {}
+
+    def redirect(self, url, status=302):
+        self.set_status(status)
+        self.set_header("Location", url)
+
+    def clear_cookie(self, name):
+        self._del_cookies = getattr(self, "_del_cookies", set())
+        self._del_cookies.add(name)
+
+    def reverse_url(self, name, *args):
+        # baselayer's fixed PSA routes; mirrors the names in app_server.py.
+        backend = args[0] if args else ""
+        return {
+            "begin": f"/login/{backend}/",
+            "complete": f"/complete/{backend}/",
+            "disconnect": f"/disconnect/{backend}/",
+        }.get(name, f"/{name}/")
+
+    def login_user(self, user):
+        """Port of baselayer PSABaseHandler.login_user: set the session cookies."""
+        self.set_secure_cookie("user_id", str(user.id))
+        import sqlalchemy
+
+        from baselayer.app import psa
+        from baselayer.app.models import DBSession
+
+        with DBSession() as session:
+            sa = session.scalars(
+                sqlalchemy.select(psa.TornadoStorage.user).where(
+                    psa.TornadoStorage.user.user_id == user.id
+                )
+            ).first()
+            if sa is not None:
+                self.set_secure_cookie("user_oauth_uid", sa.uid)
+
     # -- lifecycle ------------------------------------------------------- #
     def prepare(self):
         """Override point; runs before the HTTP method (mirrors Tornado)."""
@@ -232,6 +293,8 @@ class Handler:
         )
         for name, val in getattr(self, "_set_cookies", {}).items():
             resp.set_cookie(name, val, httponly=True)
+        for name in getattr(self, "_del_cookies", set()):
+            resp.delete_cookie(name)
         return resp
 
 
