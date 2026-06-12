@@ -23,6 +23,10 @@ dependencies = [
     "supervisor>=4.3",
     "tomli >= 2.1.0; python_full_version < '3.11'",
     "tornado>=6.0.3",
+    # Tornado -> ASGI migration (issue #381); kept alongside tornado during the
+    # transition. See doc/fastapi-migration.md.
+    "starlette>=0.37",
+    "uvicorn>=0.30",
 ]
 
 [tool.uv]
