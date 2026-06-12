@@ -26,9 +26,10 @@ from .asgi_compat import Handler, asgi_endpoint, authenticated
 
 try:
     from starlette.applications import Starlette
-    from starlette.routing import Route
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
 except ImportError:  # pragma: no cover
-    Starlette = Route = None  # type: ignore
+    Starlette = Route = Mount = StaticFiles = None  # type: ignore
 
 
 class ProfileHandler(Handler):
@@ -59,11 +60,20 @@ class SocketAuthTokenHandler(Handler):
         self.success({"token": token})
 
 
+class MainPageHandler(Handler):
+    def get(self):
+        if not self.current_user:
+            self.render("login.html")
+        else:
+            self.render("index.html")
+
+
 # Mirrors the non-static routes in baselayer's app/app_server.py.
 BASELAYER_ROUTES = [
     ("/baselayer/profile", ProfileHandler),
     ("/baselayer/logout", LogoutHandler),
     ("/baselayer/socket_auth_token", SocketAuthTokenHandler),
+    ("/", MainPageHandler),
 ] + asgi_psa.SOCIAL_AUTH_ROUTES
 
 
@@ -90,6 +100,8 @@ def make_baselayer_asgi_app(settings, cfg):
         )
         for path, handler_cls in BASELAYER_ROUTES
     ]
+    # tornado.web.StaticFileHandler -> starlette StaticFiles
+    routes.append(Mount("/static", StaticFiles(directory="static"), name="static"))
     app = Starlette(routes=routes)
     app.settings = settings
     app.cfg = cfg

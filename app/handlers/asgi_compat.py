@@ -230,6 +230,21 @@ class Handler:
             )
         )
 
+    def render(self, template_name, **kwargs):
+        """Render a template from ``settings['template_path']``.
+
+        Uses tornado.template during the transition (it faithfully handles both
+        the static templates -- index/login -- and the templated loginerror).
+        Final tornado removal = swap this for Jinja2/Starlette templates, which
+        also requires migrating the downstream templates' syntax.
+        """
+        from tornado.template import Loader
+
+        template_path = self.settings.get("template_path", "static")
+        html = Loader(template_path).load(template_name).generate(**kwargs)
+        self.set_header("Content-Type", "text/html; charset=UTF-8")
+        self.write(html)
+
     # -- realtime (already out-of-process over ZMQ) ---------------------- #
     def push(self, action, payload=None):
         # TODO: wire baselayer.app.flow.Flow().push(self.current_user["id"], ...)

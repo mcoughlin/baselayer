@@ -222,6 +222,26 @@ proven.)
 callback/user-creation/login, `current_user`, logout — with byte-compatible
 sessions.
 
-Remaining (non-auth): `MainPageHandler`'s `render()` shim (Tornado templates ->
-Jinja/Starlette), and pointing `services/app/app.py` at `uvicorn` for the
-production entry point.
+### baselayer fully on ASGI — DONE
+
+- `MainPageHandler` + a `render()` shim (uses `tornado.template` for now --
+  handles the static `index`/`login` and the templated `loginerror`), plus a
+  `StaticFiles` mount for `/static`. Verified live under uvicorn: `GET /` serves
+  `login.html` when logged out and `index.html` when logged in; `/static/*`
+  serves.
+- `services/app/asgi_app.py` -- the uvicorn variant of `services/app/app.py`
+  (same DB-migration wait + config/DB init), serving an app from an
+  `app.asgi_factory` (default: baselayer's routes). Kept parallel to `app.py` so
+  both coexist during the migration.
+
+baselayer's entire web surface (mainpage, static, profile/logout/socket,
+PSA login/complete/disconnect) now runs on Starlette/uvicorn.
+
+## Next phase: SkyPortal's handlers
+
+Point `app.asgi_factory` at a SkyPortal `make_asgi_app(settings, cfg)` that
+mounts its 211 handlers through the compat shim, then run SkyPortal's API test
+suite against it (the real acceptance test). Final tornado removal additionally
+needs: the `render()` template engine swapped to Jinja2 (downstream template
+syntax), and any handler-level `tornado.*` escapes (flush/redirect/streaming)
+mapped to shim equivalents.
