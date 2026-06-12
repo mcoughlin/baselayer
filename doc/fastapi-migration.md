@@ -207,9 +207,21 @@ unauthenticated and returns `{"username": "provisioned-admin"}` with a real
 session cookie; `/baselayer/socket_auth_token` returns a JWT. (`MainPageHandler`
 is excluded pending a `render()` template shim.)
 
-Remaining auth piece: the OAuth **callback round-trip**
-(`/complete/{backend}/` → `do_complete`: token exchange against `fake_oauth2`,
-user lookup/create via the storage, `login_user`). The handler is written; it
-needs the `fake_oauth2` service in the loop for a full login test. The other
-open items are `MainPageHandler`'s `render()` shim and pointing
-`services/app/app.py` at `uvicorn` for the production entry point.
+### OAuth callback — DONE + verified
+
+`do_complete` runs through the ported strategy. **Verified against the live
+DB**: driving `/complete/google-oauth2/` with a matching CSRF `state` (mocking
+only the token-exchange HTTP) validated the state, ran the pipeline to create a
+`User` + `UserSocialAuth`, had `login_user` set the `user_id`/`user_oauth_uid`
+session cookies, and redirected to the login-redirect URL. (A full
+cross-service round-trip additionally needs the nginx proxy in front, since the
+provider auth URL is built from the app host; the pipeline logic itself is
+proven.)
+
+**The whole auth flow now works on the ASGI stack** — login initiation,
+callback/user-creation/login, `current_user`, logout — with byte-compatible
+sessions.
+
+Remaining (non-auth): `MainPageHandler`'s `render()` shim (Tornado templates ->
+Jinja/Starlette), and pointing `services/app/app.py` at `uvicorn` for the
+production entry point.
