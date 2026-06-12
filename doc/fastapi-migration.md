@@ -237,11 +237,37 @@ sessions.
 baselayer's entire web surface (mainpage, static, profile/logout/socket,
 PSA login/complete/disconnect) now runs on Starlette/uvicorn.
 
-## Next phase: SkyPortal's handlers
+## SkyPortal's handlers (next phase) — started + API pattern verified
 
-Point `app.asgi_factory` at a SkyPortal `make_asgi_app(settings, cfg)` that
-mounts its 211 handlers through the compat shim, then run SkyPortal's API test
-suite against it (the real acceptance test). Final tornado removal additionally
-needs: the `render()` template engine swapped to Jinja2 (downstream template
-syntax), and any handler-level `tornado.*` escapes (flush/redirect/streaming)
-mapped to shim equivalents.
+The shim now supports the full SkyPortal API request pattern:
+
+- `current_user` is settable (baselayer's `@auth_or_token` assigns the resolved
+  `Token`); `Session()` (the user-aware `VerifiedSession`) is ported; and the
+  ASGI endpoint maps `tornado.web.HTTPError` (→ its status) and `AccessError`
+  (→ 401) to JSON errors like Tornado's `write_error`.
+- `skyportal/asgi_app.py` is the SkyPortal ASGI factory skeleton with a sanity
+  `/api/whoami` endpoint. **Verified live under uvicorn against the DB**: with a
+  real `Authorization: token …` it resolves the token → user, queries via
+  `Session()`, and returns `success` (`{"authenticated_as": "provisioned-admin",
+  "n_users": 1}`); with no/invalid token it returns **401** with the proper
+  "Credentials malformed" JSON error.
+
+### Re-basing real handlers — DONE (technique) + verified on ConfigHandler
+
+`skyportal/asgi_base.py` provides `ASGIBaseHandler` (SkyPortal's `BaseHandler`
+additions -- `success`/`error` `version` extra, `associated_user_object`, the
+`__init_subclass__` path-param validation -- on the shim instead of Tornado) and
+`rebase(HandlerCls)`, which copies a Tornado handler's own methods onto that
+base. **No edits to the handler source.** Verified live under uvicorn:
+`ConfigHandler`, re-based and mounted at `/api/config`, returns the real config
+(cosmology, slack preamble, …) with a token and `401` without.
+
+Remaining (the iterative tail): mount SkyPortal's full route set -- translate
+`make_app`'s `(pattern, Handler)` list with
+`asgi_compat.tornado_route_to_starlette` + `rebase`, in `make_asgi_app` -- and
+run **SkyPortal's API test suite** against the uvicorn app as the acceptance
+test, fixing the handler-specific `tornado.*` escapes it surfaces
+(`send_file`/streaming, `flush`, `redirect`, multipart uploads). Final tornado
+removal then swaps `render()` to Jinja2 and (the clean end-state) switches
+`skyportal.handlers.base.BaseHandler`'s own base to the shim so `rebase` is no
+longer needed.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from contextlib import contextmanager
 from functools import wraps
 
 # Starlette is an optional dependency during the migration; import lazily so
@@ -157,6 +158,22 @@ class Handler:
         if not hasattr(self, "_current_user_cache"):
             self._current_user_cache = self._resolve_current_user()
         return self._current_user_cache
+
+    @current_user.setter
+    def current_user(self, value):
+        # baselayer's @auth_or_token assigns the resolved Token/User here.
+        self._current_user_cache = value
+
+    @contextmanager
+    def Session(self):
+        """Port of baselayer ``BaseHandler.Session``: a user-aware scoped session
+        that verifies row access on commit."""
+        from baselayer.app.models import DBSession, VerifiedSession
+
+        with VerifiedSession(self.current_user) as session:
+            session.add(self.current_user)
+            session.bind = DBSession.session_factory.kw["bind"]
+            yield session
 
     def _resolve_current_user(self):
         """Port of baselayer ``PSABaseHandler.get_current_user``.
@@ -345,6 +362,20 @@ def asgi_endpoint(handler_cls):
             return handler._build_response()
         except _MissingArgument as e:
             handler.error(str(e), status=400)
+            return handler._build_response()
+        except Exception as e:
+            # Map tornado.web.HTTPError (status_code) and baselayer AccessError
+            # (-> 401) like Tornado's write_error; everything else -> 500.
+            status = getattr(e, "status_code", None)
+            if status is None:
+                status = 401 if type(e).__name__ == "AccessError" else 500
+            msg = (
+                getattr(e, "log_message", None)
+                or getattr(e, "reason", None)
+                or str(e)
+                or f"HTTP {status}"
+            )
+            handler.error(msg, status=status)
             return handler._build_response()
         finally:
             handler.on_finish()
