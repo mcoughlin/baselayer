@@ -262,12 +262,26 @@ base. **No edits to the handler source.** Verified live under uvicorn:
 `ConfigHandler`, re-based and mounted at `/api/config`, returns the real config
 (cosmology, slack preamble, …) with a token and `401` without.
 
-Remaining (the iterative tail): mount SkyPortal's full route set -- translate
-`make_app`'s `(pattern, Handler)` list with
-`asgi_compat.tornado_route_to_starlette` + `rebase`, in `make_asgi_app` -- and
-run **SkyPortal's API test suite** against the uvicorn app as the acceptance
-test, fixing the handler-specific `tornado.*` escapes it surfaces
-(`send_file`/streaming, `flush`, `redirect`, multipart uploads). Final tornado
+### Full SkyPortal route set mounted — DONE + smoke-tested
+
+`make_asgi_app` now mounts **all of `skyportal_handlers`** (175 routes / ~211
+handler classes): each is `rebase`d onto the shim and routed by
+`TornadoRegexRouter`, which matches SkyPortal's *original* Tornado regex
+patterns (e.g. `/api/allocation(/.*)?`) and passes captured groups positionally
+-- far more robust than translating each regex to a Starlette template. The shim
+dispatch was unified onto a shared positional `serve_handler`, and
+`success`/`error`/`write` now use baselayer's model-aware `to_json` (so
+SQLAlchemy objects serialize).
+
+**Smoke-tested live under uvicorn against the DB**: of 25 GET endpoints,
+**21 returned 200 and 0 returned 5xx** (the 4 `4xx` are handlers correctly
+requiring a query param). i.e. the real SkyPortal API handlers run on the ASGI
+stack with token auth + DB.
+
+Remaining (the tail): run **SkyPortal's full API test suite** against the
+uvicorn app as the acceptance test and fix the handler-specific `tornado.*`
+escapes it surfaces (`send_file`/streaming, `flush`, multipart uploads,
+redirects), plus exercise POST/PUT/DELETE and id-bearing routes. Final tornado
 removal then swaps `render()` to Jinja2 and (the clean end-state) switches
 `skyportal.handlers.base.BaseHandler`'s own base to the shim so `rebase` is no
 longer needed.

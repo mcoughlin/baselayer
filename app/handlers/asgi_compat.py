@@ -227,24 +227,29 @@ class Handler:
 
     def write(self, chunk):
         if isinstance(chunk, dict):
-            chunk = json.dumps(chunk)
+            # baselayer's model-aware encoder (handles SQLAlchemy objects,
+            # numpy, datetimes, ...) -- the same one Tornado's success uses.
+            # Fall back to stdlib json when baselayer isn't importable (i.e. the
+            # bottom-of-file smoke test run as a plain script).
+            try:
+                from baselayer.app.json_util import to_json
+
+                chunk = to_json(chunk)
+            except ImportError:
+                chunk = json.dumps(chunk)
             self.set_header("Content-Type", "application/json")
         self._chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
 
     def success(self, data=None, action=None, status=200, extra=None):
         if action is not None:
             self.push(action)
-        self.set_header("Content-Type", "application/json")
         self.set_status(status)
-        self.write(json.dumps({"status": "success", "data": data or {}, **(extra or {})}))
+        self.write({"status": "success", "data": data or {}, **(extra or {})})
 
     def error(self, message, data=None, status=400, extra=None):
-        self.set_header("Content-Type", "application/json")
         self.set_status(status)
         self.write(
-            json.dumps(
-                {"status": "error", "message": message, "data": data or {}, **(extra or {})}
-            )
+            {"status": "error", "message": message, "data": data or {}, **(extra or {})}
         )
 
     def render(self, template_name, **kwargs):
@@ -341,6 +346,47 @@ class _RequestView:
         self.headers = starlette_request.headers
 
 
+async def serve_handler(handler, path_args):
+    """Run a built ``Handler`` through the full request lifecycle and return a
+    Starlette ``Response``. ``path_args`` are passed *positionally* to the HTTP
+    method, matching Tornado (captured route groups -> positional args).
+
+    Shared by ``asgi_endpoint`` (Starlette-template routes) and the SkyPortal
+    Tornado-regex router.
+    """
+    handler.body = await handler._request.body()  # read body before sync dispatch
+    try:
+        handler.prepare()
+        method = getattr(handler, handler._request.method.lower(), None)
+        if method is None:
+            handler.set_status(405)
+            handler.write("Method Not Allowed")
+        else:
+            result = method(*path_args)
+            if inspect.isawaitable(result):
+                await result
+        return handler._build_response()
+    except _MissingArgument as e:
+        handler.error(str(e), status=400)
+        return handler._build_response()
+    except Exception as e:
+        # Map tornado.web.HTTPError (status_code) and baselayer AccessError
+        # (-> 401) like Tornado's write_error; everything else -> 500.
+        status = getattr(e, "status_code", None)
+        if status is None:
+            status = 401 if type(e).__name__ == "AccessError" else 500
+        msg = (
+            getattr(e, "log_message", None)
+            or getattr(e, "reason", None)
+            or str(e)
+            or f"HTTP {status}"
+        )
+        handler.error(msg, status=status)
+        return handler._build_response()
+    finally:
+        handler.on_finish()
+
+
 def asgi_endpoint(handler_cls):
     """Wrap a ``Handler`` subclass as a Starlette endpoint coroutine."""
 
@@ -348,37 +394,7 @@ def asgi_endpoint(handler_cls):
         app = request.scope.get("app")
         path_args = list(request.path_params.values())
         handler = handler_cls(request, app=app, path_args=path_args)
-        handler.body = await request.body()  # read body before (sync) dispatch
-        try:
-            handler.prepare()
-            method = getattr(handler, request.method.lower(), None)
-            if method is None:
-                handler.set_status(405)
-                handler.write("Method Not Allowed")
-            else:
-                result = method(**request.path_params)
-                if inspect.isawaitable(result):
-                    await result
-            return handler._build_response()
-        except _MissingArgument as e:
-            handler.error(str(e), status=400)
-            return handler._build_response()
-        except Exception as e:
-            # Map tornado.web.HTTPError (status_code) and baselayer AccessError
-            # (-> 401) like Tornado's write_error; everything else -> 500.
-            status = getattr(e, "status_code", None)
-            if status is None:
-                status = 401 if type(e).__name__ == "AccessError" else 500
-            msg = (
-                getattr(e, "log_message", None)
-                or getattr(e, "reason", None)
-                or str(e)
-                or f"HTTP {status}"
-            )
-            handler.error(msg, status=status)
-            return handler._build_response()
-        finally:
-            handler.on_finish()
+        return await serve_handler(handler, path_args)
 
     return endpoint
 
