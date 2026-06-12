@@ -21,9 +21,6 @@ Run the smoke test (after ``uv add starlette uvicorn``)::
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import inspect
 import json
 import re
@@ -38,34 +35,14 @@ try:
 except ImportError:  # pragma: no cover - exercised only pre-`uv sync`
     Request = Response = Route = Starlette = None  # type: ignore
 
-
-# --------------------------------------------------------------------------- #
-# Signed cookies
-#
-# NOTE: this is a *PoC* signer. For a real cutover we must read/write Tornado's
-# v2 secure-cookie format (HMAC-SHA256, keyed by ``cookie_secret``) so existing
-# logged-in sessions survive the deploy -- otherwise every user is logged out.
-# Port ``tornado.web.create_signed_value`` / ``decode_signed_value`` here.
-# --------------------------------------------------------------------------- #
-def _sign(secret: str, name: str, value: str) -> str:
-    mac = hmac.new(
-        secret.encode(), f"{name}|{value}".encode(), hashlib.sha256
-    ).hexdigest()
-    raw = f"{value}|{mac}".encode()
-    return base64.urlsafe_b64encode(raw).decode()
-
-
-def _unsign(secret: str, name: str, signed: str | None) -> str | None:
-    if not signed:
-        return None
-    try:
-        value, mac = base64.urlsafe_b64decode(signed.encode()).decode().rsplit("|", 1)
-    except Exception:
-        return None
-    expected = hmac.new(
-        secret.encode(), f"{name}|{value}".encode(), hashlib.sha256
-    ).hexdigest()
-    return value if hmac.compare_digest(mac, expected) else None
+# Tornado-byte-compatible signed cookies, with no tornado dependency (see
+# secure_cookie.py). Verified to read/write Tornado's v2 format, so logged-in
+# sessions survive the migration cutover. The fallback import lets the
+# bottom-of-file smoke test run as a plain script.
+try:
+    from . import secure_cookie
+except ImportError:  # pragma: no cover
+    import secure_cookie
 
 
 class _MissingArgument(Exception):
@@ -135,15 +112,24 @@ class Handler:
                 return default
         return arg
 
-    # -- secure cookies (PoC; see TODO above) ---------------------------- #
-    def get_secure_cookie(self, name):
-        secret = (self.cfg or {}).get("app.secret_key", "dev-secret")
-        return _unsign(secret, name, self._request.cookies.get(name))
+    # -- secure cookies (Tornado-byte-compatible; see secure_cookie.py) --- #
+    def _cookie_secret(self):
+        return (self.cfg or {}).get("app.secret_key", "dev-secret")
+
+    def get_secure_cookie(self, name, max_age_days=31):
+        # Returns bytes (Tornado semantics) or None.
+        return secure_cookie.decode_signed_value(
+            self._cookie_secret(),
+            name,
+            self._request.cookies.get(name),
+            max_age_days=max_age_days,
+        )
 
     def set_secure_cookie(self, name, value):
-        secret = (self.cfg or {}).get("app.secret_key", "dev-secret")
         self._set_cookies = getattr(self, "_set_cookies", {})
-        self._set_cookies[name] = _sign(secret, name, str(value))
+        self._set_cookies[name] = secure_cookie.create_signed_value(
+            self._cookie_secret(), name, str(value)
+        ).decode()
 
     @property
     def current_user(self):

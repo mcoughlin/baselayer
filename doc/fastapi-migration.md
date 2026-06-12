@@ -93,14 +93,13 @@ FastAPI opportunistically afterwards.
 
 ## The hard parts (and how to handle them)
 
-1. **Signed cookies.** Auth reads `get_secure_cookie("user_id")` /
-   `"user_oauth_uid")`, set by `login_user` via Tornado's HMAC cookie signing
-   (keyed by `cookie_secret`). To avoid invalidating every logged-in session on
-   deploy, the shim must **read/write Tornado's v2 secure-cookie format**, not
-   Starlette's `SessionMiddleware`. Port the ~40 lines of Tornado's
-   `create_signed_value`/`decode_signed_value` (they're self-contained HMAC-SHA256)
-   into `asgi_compat.py`. (Long term: switch to itsdangerous or JWT and accept a
-   re-login on cutover.)
+1. **Signed cookies — DONE.** `app/handlers/secure_cookie.py` is a standalone,
+   byte-compatible port of Tornado's v2 `create_signed_value` /
+   `decode_signed_value` (HMAC-SHA256, **no tornado dependency**).
+   `tests/test_secure_cookie.py` proves byte-equality against a golden Tornado
+   vector *and* against a live tornado (cross-decode both directions), plus
+   wrong-secret/wrong-name/tampered/expired rejection — so existing logged-in
+   sessions survive the cutover. Wired into the shim's `get/set_secure_cookie`.
 2. **PSA auth flow.** `social-auth-core` ships a Tornado strategy/storage
    (`app/psa.py`). `social-core` also ships `social_core.strategy` bases; we need
    a small Starlette strategy (request/response/redirect/session adapters) to
@@ -158,12 +157,20 @@ FastAPI opportunistically afterwards.
 - Per-request `DBSession` teardown must run on *every* exit path (success,
   error, exception, client disconnect) — enforce in a `finally`/middleware.
 
-## PoC status in this branch
+## Status in this branch
 
 - `app/handlers/asgi_compat.py` — compat `BaseHandler` + Starlette adapter
-  (core request/response/dispatch; secure-cookie + PSA marked TODO).
-- `pyproject.toml` — adds `starlette`, `uvicorn` (kept alongside `tornado`
-  during migration).
+  (request/response/dispatch, sync+async; **Tornado-compatible signed cookies
+  wired in**). Smoke test passes (`/ping`, `/echo`, 405).
+- `app/handlers/secure_cookie.py` — standalone byte-compatible port of Tornado's
+  v2 signed cookies (**done + tested**).
+- `tests/test_secure_cookie.py` — golden-vector + live-tornado cross-checks.
+- `pyproject.toml` — adds `starlette`, `uvicorn` (kept alongside `tornado`).
 
-Next concrete step: install deps (`uv sync`) and run the smoke test at the
-bottom of `asgi_compat.py`.
+Next concrete step (auth flow): replace `TornadoStrategy`/`TornadoStorage`
+(`app/psa.py`) with a small Starlette python-social-auth strategy, and port the
+full `current_user` (User + `SocialAuth.uid` check from
+`PSABaseHandler.get_current_user`; SkyPortal additionally accepts
+`Authorization`-header tokens). That makes baselayer's own routes
+(`/login/*`, `/complete/*`, `/baselayer/profile|logout`) runnable under uvicorn
+(phase 2 in the plan above).
