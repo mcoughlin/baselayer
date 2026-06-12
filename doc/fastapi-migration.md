@@ -160,17 +160,27 @@ FastAPI opportunistically afterwards.
 ## Status in this branch
 
 - `app/handlers/asgi_compat.py` — compat `BaseHandler` + Starlette adapter
-  (request/response/dispatch, sync+async; **Tornado-compatible signed cookies
-  wired in**). Smoke test passes (`/ping`, `/echo`, 405).
+  (request/response/dispatch, sync+async; **Tornado-compatible signed cookies**
+  and a **real `current_user`** wired in). Smoke test passes (`/ping`, `/echo`,
+  405).
 - `app/handlers/secure_cookie.py` — standalone byte-compatible port of Tornado's
   v2 signed cookies (**done + tested**).
 - `tests/test_secure_cookie.py` — golden-vector + live-tornado cross-checks.
 - `pyproject.toml` — adds `starlette`, `uvicorn` (kept alongside `tornado`).
 
-Next concrete step (auth flow): replace `TornadoStrategy`/`TornadoStorage`
-(`app/psa.py`) with a small Starlette python-social-auth strategy, and port the
-full `current_user` (User + `SocialAuth.uid` check from
-`PSABaseHandler.get_current_user`; SkyPortal additionally accepts
-`Authorization`-header tokens). That makes baselayer's own routes
-(`/login/*`, `/complete/*`, `/baselayer/profile|logout`) runnable under uvicorn
-(phase 2 in the plan above).
+### Auth read path — DONE + verified live
+
+`current_user` ports `PSABaseHandler.get_current_user` faithfully (signed
+`user_id`/`user_oauth_uid` cookies → `User`, with the `SocialAuth.uid`
+cross-check; machine users with no SocialAuth row accepted). **Verified against
+the running server**: a cookie minted with the server's real `app.secret_key`
+resolved the real `skyportal_test` user (`id=1 provisioned-admin`) through the
+shim. SkyPortal additionally accepts `Authorization`-header tokens; that
+override lives in *its* `BaseHandler` and layers on top of this.
+
+Next concrete step (auth **write** path / login): replace
+`TornadoStrategy`/`TornadoStorage` (`app/psa.py`) with a small Starlette
+python-social-auth strategy (request/response/redirect/session adapters) so the
+OAuth dance at `/login/*` and `/complete/*` runs under uvicorn. With that +
+`current_user`, baselayer's own routes (`/baselayer/profile|logout`,
+`socket_auth_token`, mainpage) are fully runnable on the ASGI stack.

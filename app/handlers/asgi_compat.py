@@ -133,11 +133,52 @@ class Handler:
 
     @property
     def current_user(self):
-        # baselayer's PSABaseHandler.get_current_user, reduced; SkyPortal extends
-        # this to also accept Authorization-header tokens.
-        # TODO: port the full get_current_user (User + SocialAuth uid check).
+        if not hasattr(self, "_current_user_cache"):
+            self._current_user_cache = self._resolve_current_user()
+        return self._current_user_cache
+
+    def _resolve_current_user(self):
+        """Port of baselayer ``PSABaseHandler.get_current_user``.
+
+        Cookie auth: the ``user_id`` + ``user_oauth_uid`` signed cookies resolve
+        to a ``User``, with the ``SocialAuth.uid`` cross-checked (a machine user
+        with no SocialAuth row is accepted). SkyPortal additionally accepts
+        ``Authorization``-header tokens; that override lives in *its*
+        ``BaseHandler`` and would layer on top of this.
+        """
         uid = self.get_secure_cookie("user_id")
-        return {"id": int(uid)} if uid else None
+        if uid is None:
+            return None
+        user_id = int(uid)
+        oauth_uid = self.get_secure_cookie("user_oauth_uid")
+        if not (user_id and oauth_uid):
+            return None
+        # Imported lazily so the module (and the smoke test) load without a DB.
+        import sqlalchemy
+
+        from baselayer.app import psa
+        from baselayer.app.models import DBSession, User
+
+        with DBSession() as session:
+            try:
+                user = session.scalars(
+                    sqlalchemy.select(User).where(User.id == user_id)
+                ).first()
+                if user is None:
+                    return None
+                sa = session.scalars(
+                    sqlalchemy.select(psa.TornadoStorage.user).where(
+                        psa.TornadoStorage.user.user_id == user_id
+                    )
+                ).first()
+                if sa is None:
+                    return user  # machine-generated user; no SocialAuth row
+                if sa.uid.encode("utf-8") == oauth_uid:
+                    return user
+                return None
+            except Exception:
+                session.rollback()
+                return None
 
     # -- response -------------------------------------------------------- #
     def set_status(self, code):
