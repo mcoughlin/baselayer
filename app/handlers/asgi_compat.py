@@ -267,6 +267,20 @@ class Handler:
             self.set_header("Content-Type", "application/json")
         self._chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
 
+    def flush(self, include_footers=False):
+        # No streaming in the shim: the buffered chunks/status are turned into a
+        # single Response after the handler returns, so flush is a no-op. Present
+        # because some handlers call it (e.g. before a long operation).
+        pass
+
+    def finish(self, chunk=None):
+        # Tornado ends the response with finish(); the shim builds the Response
+        # from the buffered state after the handler returns, so this only needs
+        # to append an optional final chunk (e.g. the 404 path in
+        # SourceHandler.head does ``self.set_status(404); self.finish()``).
+        if chunk is not None:
+            self.write(chunk)
+
     def success(self, data=None, action=None, status=200, extra=None):
         if action is not None:
             self.push(action)
