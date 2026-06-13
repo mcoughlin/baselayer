@@ -167,13 +167,40 @@ class Handler:
     @contextmanager
     def Session(self):
         """Port of baselayer ``BaseHandler.Session``: a user-aware scoped session
-        that verifies row access on commit."""
+        that verifies row access on commit.
+
+        Unlike the Tornado original, this turns *off autoflush* on the request's
+        global ``DBSession`` while the handler runs. The reason: a single request
+        mutates the target row in this verified session (the handler's edits),
+        but marshmallow's ``schema.load(data)`` (configured with
+        ``sqla_session=DBSession, load_instance=True``) loads *and dirties a
+        second copy of the same row* in ``DBSession``. With autoflush on,
+        ``verify()`` -> ``bulk_verify()``'s access-check SELECT autoflushes that
+        stray copy as an ``UPDATE`` on ``DBSession``'s connection (taking a row
+        lock), and then this session's ``flush()`` tries to write the same row on
+        its own connection -- a guaranteed cross-connection deadlock (which, run
+        in the event-loop thread, freezes the whole server). With autoflush off,
+        the stray ``DBSession`` copy is never written; it is simply discarded
+        when ``DBSession`` is removed at end of request. Only this verified
+        session writes the row, so there is nothing to deadlock against.
+        ``bulk_verify`` still reads committed DB state, so access checks are
+        unaffected -- and crucially the two sessions stay *separate*, which
+        ``bulk_verify`` relies on (it must see rows that are merely pending-delete
+        in this session as still-present, to verify delete permissions).
+        (Under Tornado the sync handler runs in a worker thread, so this never
+        bites; in-process on the event loop it does.)"""
         from baselayer.app.models import DBSession, VerifiedSession
 
         with VerifiedSession(self.current_user) as session:
             session.add(self.current_user)
             session.bind = DBSession.session_factory.kw["bind"]
-            yield session
+            dbs = DBSession()
+            prev_autoflush = dbs.autoflush
+            dbs.autoflush = False
+            try:
+                yield session
+            finally:
+                DBSession().autoflush = prev_autoflush
 
     def _resolve_current_user(self):
         """Port of baselayer ``PSABaseHandler.get_current_user``.
@@ -268,12 +295,28 @@ class Handler:
         self.write(html)
 
     # -- realtime (already out-of-process over ZMQ) ---------------------- #
-    def push(self, action, payload=None):
-        # TODO: wire baselayer.app.flow.Flow().push(self.current_user["id"], ...)
-        pass
+    @property
+    def flow(self):
+        """Lazily-created ``Flow`` (ZMQ PUSH to the websocket microservice),
+        mirroring Tornado ``BaseHandler.prepare``'s ``self.flow = Flow()``.
 
-    def push_all(self, action, payload=None):
-        pass
+        Many handlers call ``self.flow.push(...)`` directly. A property (rather
+        than setting it in ``prepare``) keeps it available even for handlers
+        that override ``prepare`` without calling super. The ZMQ PUSH socket
+        connects lazily and never blocks when no consumer is attached."""
+        if not hasattr(self, "_flow"):
+            from baselayer.app.flow import Flow
+
+            self._flow = Flow()
+        return self._flow
+
+    def push(self, action, payload={}):
+        # Don't push messages if current user is a token (mirrors BaseHandler).
+        if hasattr(self.current_user, "username"):
+            self.flow.push(self.current_user.id, action, payload)
+
+    def push_all(self, action, payload={}):
+        self.flow.push("*", action, payload=payload)
 
     # -- redirect / cookies / auth helpers (used by the PSA login flow) -- #
     @property
@@ -355,6 +398,25 @@ async def serve_handler(handler, path_args):
     Tornado-regex router.
     """
     handler.body = await handler._request.body()  # read body before sync dispatch
+
+    # Establish a fresh per-request scoped-session id, exactly as Tornado's
+    # BaseHandler.prepare does. baselayer's DBSession/VerifiedSession are
+    # scoped on the `session_context_id` ContextVar; without a unique id per
+    # request the scoped session is shared across requests and never torn down,
+    # leaking connections as "idle in transaction". Once a leaked session holds
+    # a row lock (e.g. a `mode="update"` permission check emits SELECT ... FOR
+    # UPDATE), the next writer to that row deadlocks -- and because the handler
+    # runs its blocking psycopg call in the event-loop thread, the whole server
+    # freezes. Setting the id here + DBSession.remove() in finally mirrors
+    # Tornado's prepare()/on_finish() and gives each request its own session.
+    try:
+        from baselayer.app.models import session_context_id
+        from uuid import uuid4
+
+        session_context_id.set(uuid4().hex)
+    except ImportError:  # standalone smoke test (no baselayer.app.models)
+        pass
+
     try:
         handler.prepare()
         method = getattr(handler, handler._request.method.lower(), None)
@@ -385,6 +447,16 @@ async def serve_handler(handler, path_args):
         return handler._build_response()
     finally:
         handler.on_finish()
+        # Release the scoped session (ends its transaction, returns the
+        # connection to the pool), mirroring Tornado BaseHandler.on_finish ->
+        # DBSession.remove(). Done here at the request boundary so it can't be
+        # skipped by a handler that overrides on_finish without calling super.
+        try:
+            from baselayer.app.models import DBSession
+
+            DBSession.remove()
+        except ImportError:  # standalone smoke test
+            pass
 
 
 def asgi_endpoint(handler_cls):
