@@ -1,6 +1,6 @@
 """Proof-of-concept ASGI (Starlette) compatibility layer for baselayer handlers.
 
-See ``doc/fastapi-migration.md`` for the full design. The idea: keep the
+The idea: keep the
 ``class XHandler(BaseHandler): async def get(self, id): ... self.success(...)``
 programming model that all ~211 SkyPortal handlers use, but run it on Starlette
 + uvicorn instead of Tornado.
