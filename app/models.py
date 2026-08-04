@@ -201,7 +201,35 @@ async_session_factory = None
 async_plain_session_factory = None
 
 
-class _AsyncVerifiedSession(SAAsyncSession):
+class _AsyncUpsertMixin:
+    """`upsert` shorthand for async sessions: update-or-insert by a natural key."""
+
+    async def upsert(self, model, *, by, values=None):
+        """Update the single ``model`` row matching ``by``, or insert a new one.
+
+        ``by`` maps attribute -> value identifying the row (typically a unique
+        key). If a row matches, each of ``values`` is assigned onto it; otherwise
+        ``model(**by, **values)`` is added. Both dicts may include relationship
+        attributes. Returns the instance and does not commit.
+        """
+        values = values or {}
+        instance = await self.scalar(
+            sa.select(model).where(*(getattr(model, k) == v for k, v in by.items()))
+        )
+        if instance is None:
+            instance = model(**{**by, **values})
+            self.add(instance)
+        else:
+            for key, value in values.items():
+                setattr(instance, key, value)
+        return instance
+
+
+class _AsyncPlainSession(_AsyncUpsertMixin, SAAsyncSession):
+    """Plain async session (no RLS check) carrying the `upsert` shorthand."""
+
+
+class _AsyncVerifiedSession(_AsyncUpsertMixin, SAAsyncSession):
     """Async counterpart of `_VerifiedSession`. Runs RLS verification on
     flush/commit using `async_bulk_verify`.
 
@@ -441,6 +469,7 @@ def init_db(
     )
     async_plain_session_factory = async_sessionmaker(
         bind=async_engine,
+        class_=_AsyncPlainSession,
         autoflush=autoflush,
         expire_on_commit=False,
     )
