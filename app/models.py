@@ -45,16 +45,6 @@ session_context_id = contextvars.ContextVar("request_id", default=None)
 DBSession = scoped_session(sessionmaker(), scopefunc=session_context_id.get)
 
 
-def get_db_engine():
-    """The SQLAlchemy engine that DBSession is bound to.
-
-    A readable accessor so callers that need a one-off sync Session can write
-    ``Session(bind=get_db_engine())`` instead of reaching into
-    ``DBSession.session_factory`` internals. Only valid after ``init_db``.
-    """
-    return DBSession.session_factory.kw["bind"]
-
-
 class _VerifiedSession(sa.orm.session.Session):
     """
     Create an instance of Session when you
@@ -209,6 +199,9 @@ async_engine = None
 async_session_factory = None
 # Plain factory (no RLS check), parallel to DBSession.
 async_plain_session_factory = None
+# Sync analog: a fresh unscoped Session bound to the engine, for work that must
+# not share the request-scoped DBSession. Use ``with plain_session_factory() as s:``.
+plain_session_factory = None
 
 
 class _AsyncVerifiedSession(SAAsyncSession):
@@ -434,6 +427,9 @@ def init_db(
 
     DBSession.configure(bind=conn, autoflush=autoflush, future=True)
     Base.metadata.bind = conn
+
+    global plain_session_factory
+    plain_session_factory = sessionmaker(bind=conn, autoflush=autoflush, future=True)
 
     global async_engine, async_session_factory, async_plain_session_factory
     async_engine = create_async_engine(
