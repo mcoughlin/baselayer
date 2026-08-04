@@ -195,9 +195,10 @@ def bulk_verify(mode, collection, accessor):
 # Configured by init_db(). Sync engine/session remain authoritative for the
 # rest of the codebase; async path is opt-in per handler.
 async_engine = None
-# Verified factory (RLS check on commit), parallel to VerifiedSession.
+# Verified factory: runs the row-level access-control (RLS) check on commit,
+# parallel to VerifiedSession.
 async_session_factory = None
-# Plain factory (no RLS check), parallel to DBSession.
+# Plain factory (no access-control check), parallel to DBSession.
 async_plain_session_factory = None
 # Sync analog: a fresh unscoped Session bound to the engine, for work that must
 # not share the request-scoped DBSession. Use ``with plain_session_factory() as s:``.
