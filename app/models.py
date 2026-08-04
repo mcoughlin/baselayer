@@ -45,6 +45,16 @@ session_context_id = contextvars.ContextVar("request_id", default=None)
 DBSession = scoped_session(sessionmaker(), scopefunc=session_context_id.get)
 
 
+def get_db_engine():
+    """The SQLAlchemy engine that DBSession is bound to.
+
+    A readable accessor so callers that need a one-off sync Session can write
+    ``Session(bind=get_db_engine())`` instead of reaching into
+    ``DBSession.session_factory`` internals. Only valid after ``init_db``.
+    """
+    return DBSession.session_factory.kw["bind"]
+
+
 class _VerifiedSession(sa.orm.session.Session):
     """
     Create an instance of Session when you
