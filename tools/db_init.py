@@ -49,9 +49,7 @@ if host:
 if port:
     flags += f" -p {port}"
 
-# Superuser used to create the role and databases. Defaults to "postgres", but
-# some installs (e.g. Docker with POSTGRES_USER set) have a different superuser
-# (issue #5978); override with database.admin_user.
+# Superuser for creating the role/databases; not every install uses "postgres".
 admin_user = cfg.get("database.admin_user") or "postgres"
 admin_flags = flags.replace(f"-U {user}", f"-U {admin_user}")
 
