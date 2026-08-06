@@ -21,6 +21,10 @@ database:
     port: 5432
     user:
     password:
+    # Superuser used only by `make db_init` to create the role and databases.
+    # Empty defaults to "postgres"; set this if your Postgres has a different
+    # superuser (e.g. Docker POSTGRES_USER). See issue #5978.
+    admin_user:
 
 paths:
     downloads_folder: '/tmp'
