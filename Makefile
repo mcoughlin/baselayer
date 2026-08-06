@@ -127,8 +127,9 @@ attach: ## Attach to terminal of running webserver; useful to, e.g., use pdb.
 clean:
 	rm -rf static/build
 
-stop: ## Stop all running services.
-	$(SUPERVISORCTL) stop all
+# `stop all` leaves supervisord holding its socket, blocking the next `make run`.
+stop: ## Stop all running services and the supervisor itself.
+	$(SUPERVISORCTL) shutdown
 
 status:
 	@$(PYTHON) ./baselayer/tools/supervisor_status.py
