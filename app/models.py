@@ -375,6 +375,7 @@ def init_db(
     autoflush=True,
     engine_args={},
     pooler=None,
+    admin_user=None,
 ):
     """
     Parameters
@@ -394,6 +395,9 @@ def init_db(
            Default 3600.
 
     """
+    # admin_user belongs to the `database` config block (used by db_init) but is
+    # not a connection parameter, so it is accepted and ignored here; callers
+    # spread the whole block via init_db(**cfg["database"]).
     host, port, engine_args = _resolve_pooler(host, port, engine_args, pooler)
 
     url = "postgresql+psycopg://{}:{}@{}:{}/{}".format(
