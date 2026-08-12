@@ -43,6 +43,7 @@ for backend in auth_backends:
     prefix = setting_prefix(backend["name"])
     settings[f"SOCIAL_AUTH_{prefix}_KEY"] = backend["key"]
     settings[f"SOCIAL_AUTH_{prefix}_SECRET"] = backend["secret"]
+    settings[f"SOCIAL_AUTH_{prefix}_USE_UNIQUE_USER_ID"] = backend["use_unique_user_id"]
     for key, value in backend["settings"].items():
         settings[f"SOCIAL_AUTH_{prefix}_{key.upper()}"] = value
 

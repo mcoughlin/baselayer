@@ -67,6 +67,24 @@ def configured_backends():
                 or (GOOGLE_BACKEND["label"] if name == "google-oauth2" else None)
                 or f"Sign in with {name}",
                 "settings": backend.get("settings") or {},
+                # Identities join on (provider, subject). Providers that key on
+                # email instead let an address change split an account in two,
+                # and make two providers reporting one address indistinguishable.
+                "use_unique_user_id": backend.get("use_unique_user_id", True),
+                # Whether an email from this provider may be treated as verified
+                # when it carries no `email_verified` claim. Only set it for a
+                # provider known to verify addresses, since it is what lets a
+                # sign-in attach to an existing account.
+                "trust_email": backend.get("trust_email", False),
             }
         )
     return normalized
+
+
+def backend_trusts_email(name):
+    """Whether `name` asserts verified emails without an `email_verified` claim."""
+    return any(
+        backend["trust_email"]
+        for backend in configured_backends()
+        if backend["name"] == name
+    )
