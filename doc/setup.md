@@ -79,7 +79,61 @@ See [below](#configuration) for more information on modifying the baselayer conf
 - Customize `config.yaml` (see `config.yaml.defaults` for all options).
   - Always modify `secret_key` before deployment!
 - If you want other users to be able to log in:
-  - Provide Google auth credentials, obtained as described in `config.yaml`.
+  - Provide Google auth credentials, obtained as described in `config.yaml`,
+    or configure another provider (see below).
+
+### Sign-in providers
+
+Sign-in is handled by [python-social-auth](https://github.com/python-social-auth/social-core),
+which ships backends for Google, ORCID, GitHub, Slack, SAML, generic OpenID
+Connect and many others. With no configuration, Google is used, taking its
+credentials from `server.auth.google_oauth2_key` / `_secret`.
+
+To offer something else, list it under `server.auth.backends`. Each entry needs
+the backend's own `name`, plus the dotted path to its class. The name is what
+appears in `/login/<name>`, and what its `SOCIAL_AUTH_<NAME>_*` settings are
+keyed on:
+
+```yaml
+server:
+  auth:
+    backends:
+      - name: orcid
+        class: social_core.backends.orcid.ORCIDOAuth2
+        key: ...
+        secret: ...
+        label: Sign in with ORCID
+      - name: my-iam
+        class: social_core.backends.open_id_connect.OpenIdConnectAuth
+        key: ...
+        secret: ...
+        settings:
+          oidc_endpoint: https://iam.example.org
+```
+
+Anything under `settings` is exported as `SOCIAL_AUTH_<NAME>_<KEY>`, so a
+provider speaking standard OpenID Connect needs no code at all. A provider that
+does need code, for example a bespoke federation endpoint, can subclass
+`social_core.backends.oauth.BaseOAuth2` anywhere importable and be named here by
+its dotted path; it does not have to live in baselayer.
+
+Providers are offered in the order listed, one login button each, and
+`debug_login` impersonates the first one so test mode exercises the same routes
+as production.
+
+### Identity across providers
+
+An account is matched on `(provider, subject)` — the provider's own stable id
+for the user. `use_unique_user_id` (default `true`) is what makes the subject the
+key rather than the email address: emails get reassigned, and two providers
+reporting one address are not thereby the same person.
+
+That matters as soon as a second provider is enabled. An app that wants a
+sign-in to attach to an existing account by email should do so only when the
+provider vouches for the address, which means an `email_verified` claim in the
+response, or `trust_email: true` on a backend that verifies addresses without
+sending the claim. Setting `trust_email` on a provider that does not verify lets
+anyone who can claim an address there take over the matching account.
 
 ### Username generation
 
