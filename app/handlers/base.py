@@ -155,7 +155,23 @@ class PSABaseHandler(RequestHandler):
             )
 
     def on_finish(self):
-        DBSession.remove()
+        try:
+            DBSession.remove()
+        except Exception as e:
+            # The response is already sent, so raising here does not surface to
+            # the client -- it lands in Tornado's error handling as "Exception
+            # in exception handler", masking the real outcome of the request.
+            #
+            # remove() rolls back, which fails when the server has already
+            # closed the connection: pgbouncer drops one that sat idle in a
+            # transaction past idle_transaction_timeout. Discard the session so
+            # the next request on this context starts clean rather than
+            # inheriting the dead one.
+            log(f"Session cleanup failed, discarding it: {e}")
+            try:
+                DBSession.registry.clear()
+            except Exception:
+                pass
 
 
 class BaseHandler(PSABaseHandler):
