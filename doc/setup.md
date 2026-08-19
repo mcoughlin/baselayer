@@ -117,23 +117,33 @@ does need code, for example a bespoke federation endpoint, can subclass
 `social_core.backends.oauth.BaseOAuth2` anywhere importable and be named here by
 its dotted path; it does not have to live in baselayer.
 
-Providers are offered in the order listed, one login button each, and
-`debug_login` impersonates the first one so test mode exercises the same routes
-as production.
+The login page shows one button per provider, in the order listed. In [debug
+mode](#debug-mode), where sign-in succeeds without contacting any provider, the
+stand-in takes the name of the first provider you list, so development and
+production exercise the same login page and the same routes.
 
-### Identity across providers
+### Signing in with more than one provider
 
-An account is matched on `(provider, subject)` — the provider's own stable id
-for the user. `use_unique_user_id` (default `true`) is what makes the subject the
-key rather than the email address: emails get reassigned, and two providers
-reporting one address are not thereby the same person.
+Returning with a provider you have used before always lands you back in the same
+account, even if you have since changed your email address there.
 
-That matters as soon as a second provider is enabled. An app that wants a
-sign-in to attach to an existing account by email should do so only when the
-provider vouches for the address, which means an `email_verified` claim in the
-response, or `trust_email: true` on a backend that verifies addresses without
-sending the claim. Setting `trust_email` on a provider that does not verify lets
-anyone who can claim an address there take over the matching account.
+Returning with a _different_ provider is recognised as the same person only when
+the second provider reports an email address matching the account and vouches
+that the address is yours. Otherwise you get a second, separate account.
+
+Most providers say whether they have verified an address, and some verify but
+never say so. For one you are confident about, add `trust_email` and its
+addresses will be accepted for matching:
+
+```yaml
+- name: orcid
+  class: social_core.backends.orcid.ORCIDOAuth2
+  trust_email: true
+```
+
+Leave it off for anything else. There is also `use_unique_user_id`, on by
+default, which keeps accounts tied to the provider's own id for the user rather
+than to their email address; there is rarely a reason to change it.
 
 ### Username generation
 
