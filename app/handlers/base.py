@@ -12,7 +12,7 @@ from json.decoder import JSONDecodeError
 import sqlalchemy
 import tornado.escape
 from tornado.log import app_log
-from tornado.web import RequestHandler
+from tornado.web import HTTPError, RequestHandler
 
 from ...log import make_log
 
@@ -136,6 +136,7 @@ class PSABaseHandler(RequestHandler):
         self.render("loginerror.html", app=cfg["app"], error_message=str(err))
 
     def log_exception(self, typ=None, value=None, tb=None):
+        # Expected conditions raised as plain exceptions, with no status to test.
         expected_exceptions = [
             "Authentication Error:",
             "User account expired",
@@ -144,7 +145,14 @@ class PSABaseHandler(RequestHandler):
             "Unauthorized",
         ]
         v_str = str(value)
-        if any(exception in v_str for exception in expected_exceptions):
+        # A 4xx is the caller's fault; scanner traffic would otherwise be
+        # reported as application errors.
+        is_client_error = (
+            isinstance(value, HTTPError) and 400 <= value.status_code < 500
+        )
+        if is_client_error or any(
+            exception in v_str for exception in expected_exceptions
+        ):
             log(f"Error response returned by [{self.request.path}]: [{v_str}]")
         else:
             app_log.error(
