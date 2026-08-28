@@ -25,9 +25,6 @@ settings = {
     "SOCIAL_AUTH_STRATEGY": "baselayer.app.psa.TornadoStrategy",
     "SOCIAL_AUTH_LOGIN_URL": "/",
     "SOCIAL_AUTH_LOGIN_REDIRECT_URL": "/",  # on success
-    # Where a failed sign-in lands. Nothing serves /login-error/, so the
-    # default is the login page itself; an app with a dedicated page for
-    # this points the setting at it.
     "SOCIAL_AUTH_LOGIN_ERROR_URL": "/",
     "SOCIAL_AUTH_USER_FIELDS": ["username"],
     "SOCIAL_AUTH_USERNAME_IS_FULL_EMAIL": cfg.get(
