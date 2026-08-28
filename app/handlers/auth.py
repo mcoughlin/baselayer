@@ -55,14 +55,7 @@ def psa(redirect_uri=None):
 
 
 def _failed(handler, backend, exc):
-    """Send the user back to sign in instead of showing them a traceback.
-
-    A failed OAuth exchange is nearly always the user's attempt going stale --
-    an authorization code already spent, a consent screen dismissed, a provider
-    briefly refusing the token request -- rather than a fault in this
-    application. Raising turns that into a 500 and an error report; log it and
-    let them try again.
-    """
+    # Almost always user-side (spent code, dismissed consent), not a server fault.
     log(f"Authentication with {backend} failed: {exc}")
     handler.redirect(handler.settings.get("SOCIAL_AUTH_LOGIN_ERROR_URL", "/"))
 
