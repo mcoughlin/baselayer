@@ -1,4 +1,4 @@
-from requests import HTTPError
+from requests import RequestException
 from social_core.backends.github import GithubOAuth2
 
 
@@ -16,16 +16,21 @@ class VerifiedEmailGithubOAuth2(GithubOAuth2):
             emails = [
                 email
                 for email in (self._user_data(access_token, "/emails") or [])
-                if isinstance(email, dict)
+                if isinstance(email, dict) and email.get("email")
             ]
-        except (HTTPError, ValueError, TypeError):
+        except (RequestException, ValueError, TypeError):
             emails = []
 
-        # The primary address, else the first offered.
-        chosen = next((e for e in emails if e.get("primary")), None) or next(
-            iter(emails), None
+        # A verified address, primary first; an unverified one only fills a blank.
+        verified = [email for email in emails if email.get("verified")]
+        chosen = next((e for e in verified if e.get("primary")), None) or next(
+            iter(verified), None
         )
-        if chosen and chosen.get("email"):
+        if not chosen and not data.get("email"):
+            chosen = next((e for e in emails if e.get("primary")), None) or next(
+                iter(emails), None
+            )
+        if chosen:
             data["email"] = chosen["email"]
             if chosen.get("verified"):
                 data["email_verified"] = True
